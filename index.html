@@ -2251,7 +2251,16 @@ const Sound = {
   /* Mehrere Varianten desselben Klangs: bei jedem Zug eine zufaellig
      auswaehlen, damit haeufige Klicks nicht mechanisch klingen. */
   pick(prefix, n, vol){ this.play(prefix + '-' + (1 + Math.floor(Math.random()*n)), vol); },
+  /* Laenge in Sekunden, sobald der Klang dekodiert ist - sonst null. */
+  dauer(name){ const b = this.buf[name]; return b ? b.duration : null; },
 };
+
+/* Denkpause der KI zwischen zwei Zügen. Beim Auflösen einer Superkraft
+   etwas länger, damit die Meldung dazu lesbar bleibt. */
+const KI_PAUSE_MS = 340, KI_PAUSE_KRAFT_MS = 650;
+/* Wie lange nach "Partie starten" der allererste Zug auf sich warten lässt -
+   gibt dem Start-Klang Raum, ohne den Anfang zäh zu machen. */
+const ERSTER_ZUG_NACH_MS = 1800;
 
 const SFX = {
   select:     ()=> Sound.pick('select', 3),
@@ -2453,6 +2462,13 @@ const App = {
     if(this.busy) return;
     this.busy = true;
     try{
+      /* Erster Zug einer frischen Partie: erst ab _ersterZugAb. Die normale
+         Denkpause der Schleife wird abgezogen, damit der Zug tatsächlich nach
+         ERSTER_ZUG_NACH_MS fällt und nicht erst danach. Später im Spiel liegt
+         der Zeitpunkt in der Vergangenheit, die Bedingung greift dann von
+         selbst nicht mehr. */
+      const wartenNochMs = (this._ersterZugAb || 0) - Date.now() - KI_PAUSE_MS;
+      if(wartenNochMs > 0) await new Promise(r=>setTimeout(r, wartenNochMs));
       let guard=0;
       while(!this.state.finished && guard++<4000){
         /* Steht noch eine unbestätigte Meldung, wartet die KI. Vorher zog sie
@@ -2471,7 +2487,7 @@ const App = {
            Pause + Banner mit der tatsächlichen Log-Zeile, damit sichtbar
            bleibt, WAS genau passiert ist, nicht nur DASS etwas passiert ist. */
         const resolvingSpecial = !!(this.state.pendingSpecial && this.state.pendingSpecial.role===role);
-        await new Promise(r=>setTimeout(r, resolvingSpecial ? 650 : 340));
+        await new Promise(r=>setTimeout(r, resolvingSpecial ? KI_PAUSE_KRAFT_MS : KI_PAUSE_MS));
         const logLenBefore = this.state.log.length;
         const specialBefore = this.state.pendingSpecial;
         const mv = AI.chooseMove(this.state, role, this.roleDifficulty[role] || 'normal');
@@ -2899,7 +2915,7 @@ const App = {
     const enoughRoles = activeRoles.length>=2;
     return `<div class="center"><div class="panel setup">
       <h1><span class="western">🤠 Cowboys</span> gegen <span class="western">🤖</span> KI</h1>
-      <p>Statt Karten gibt es Münzen: jede Partei hat eine eigene Bank aus 30 Eroberungssteinen (6× Wert 1-5) und eine geheime Münz-Reserve, die zu Beginn 5 Münzen enthält. Diese Reserve füllt sich nur beim Anlegen eines Hexagons wieder auf — Münzen setzen ohne je ein Hexagon anzulegen, läuft die Reserve also leer. Hexagons selbst kommen aus einem gemeinsamen, für alle sichtbaren Vorrat (fest 5 Stück, unabhängig von der Parteizahl). Fünf Auswertungs-Hexagons im gemeinsamen Nachziehstapel lösen die Punktrunden aus — bei Gleichstand bleibt ein Feld für alle offen und weiter bietbar, sonst geht es dauerhaft an die siegreiche Partei.</p>
+      <p>Biete auf Felder, um nach fünf Auswertungen die meisten Siegpunkte zu haben. Siegpunkte bekommst du für 1. zusammenhängende Farbflächen, 2. Reihen von Feldern und 3. Farbvielfalt („Regenbogen“).</p>
       <div class="title" style="margin-top:14px;">Welche Parteien spielen mit? (2 bis 6, freie Wahl)</div>
       <div class="row">
         ${E.ROLES_ORDER.map(r=>`<button data-activerole="${r}" class="rolebtn ${this.activeRoles.has(r)?'active':''}">${E.ROLE_META[r].emoji} ${E.ROLE_META[r].label}</button>`).join('')}
@@ -2919,8 +2935,7 @@ const App = {
         </div>`;
       }).join('')}
       <button id="go" class="primary" style="width:100%;margin-top:16px;" ${enoughRoles?'':'disabled'}>${spectatorMode?'Zuschauer-Partie starten':'Partie starten'}</button>
-      <div style="text-align:center;margin-top:8px;"><button id="musikToggle" style="font-size:12px;padding:6px 14px;">🔊 Musik aus</button></div>
-      <p class="note">Jeder Zug ist eine freie Wahl: entweder ein Hexagon aus dem gemeinsamen Vorrat anlegen ODER eine eigene Münze verdeckt setzen. Ein angelegtes Hexagon füllt sofort zwei Dinge auf: den gemeinsamen Hex-Vorrat (für alle) und die eigene Münz-Reserve (auf die Grundmenge von 5, solange die eigene Bank das hergibt) — eine gesetzte Münze wird dagegen NICHT automatisch ersetzt. Das koppelt Bieten an Bauen: ohne neue Hexagons anzulegen, geht irgendwann die Münz-Reserve zur Neige. Zieht man beim Hexagon-Anlegen ein Auswertungs-Hexagon, wird noch ein Ersatz-Hexagon nachgezogen, bevor die Punkterunde ausgewertet wird. Wer eine Auswertung nicht gewinnt, bekommt als Ausgleich eine Zusatzmünze; die Partei mit den wenigsten Punkten beginnt die nächste Runde. Die Zugreihenfolge selbst ist fest und ändert sich nie — es verschiebt sich nur, wo begonnen wird. 5 Auswertungs-Hexagons stecken im gemeinsamen Nachziehstapel und lösen in fester Reihenfolge (×1 bis ×5) je eine Punkterunde aus. Zusätzlich sind Superkraft-Hexagons eingemischt (🤠 Shoot-Out, 🤖 Mach was kaputt, 🥷 Battōjutsu, 🐸 Manifestation, 👽 Alien-Entführung, ☠️ Piratenüberfall): 3 pro Partei bei 2-4 Parteien, 2 pro Partei ab 5 Parteien — und zwar nur in den letzten Phasen, mit höchstens einer Kraft je Partei und Phase. Wird eine gezogen, löst die besitzende Partei sie sofort aus, unabhängig davon, wer sie gezogen hat; danach geht es bei der Partei nach ihr weiter.</p>
+      <p class="note">Nach der 5. Auswertung werden alle Rundenpunkte addiert. Wer die meisten Siegpunkte hat, gewinnt.</p>
     </div></div>`;
   },
   bindSetup(){
@@ -2945,10 +2960,16 @@ const App = {
        vorher verweigern Browser das Abspielen. */
     document.addEventListener('pointerdown', ()=>Music.starten(), {once:true});
     Music.starten();
-    const mb = document.getElementById('musikToggle');
-    if(mb) mb.onclick=()=>{ mb.textContent = Music.umschalten() ? '🔊 Musik aus' : '🔈 Musik an'; };
     const go = document.getElementById('go');
-    if(go) go.onclick=()=>{ Music.stoppen(); SFX.gameStarts(); this.newGame(); };
+    if(go) go.onclick=()=>{
+      Music.stoppen();
+      SFX.gameStarts();
+      /* Der Start-Klang bekommt einen Moment für sich, bevor die erste
+         KI-Partei zieht - aber nicht seine volle Länge, das machte den
+         Anfang zäh. Siehe ERSTER_ZUG_NACH_MS und runAI. */
+      this._ersterZugAb = Date.now() + ERSTER_ZUG_NACH_MS;
+      this.newGame();
+    };
   },
 
   coinChipsForCell(cell){
@@ -2971,7 +2992,11 @@ const App = {
         const effectiveTotal = faceUp.reduce((sum,c)=>sum+c.value+bonus,0);
         parts.push(`<span class="chip open">${faceUp.length}×${emoji}=${effectiveTotal}</span>`);
       }
-      if(hidden.length) parts.push(`<span class="chip">${hidden.length}×${emoji}</span>`);
+      /* Fragezeichen = Wert unbekannt. Ohne diesen Zusatz sahen frische,
+         verdeckte Gebote auf einem Gleichstands-Feld genauso aus wie die
+         dort offen liegenden Münzen der Mitbesitzer - es entstand der
+         Eindruck, die Münzen der Unterlegenen wären liegen geblieben. */
+      if(hidden.length) parts.push(`<span class="chip">${hidden.length}×${emoji}?</span>`);
     });
     return {html: parts.join(''), count: parts.length};
   },
