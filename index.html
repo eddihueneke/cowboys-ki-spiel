@@ -2274,7 +2274,15 @@ const SFX = {
   fanfare:    (major)=> Sound.play(major ? 'fanfare-positiv'  : 'fanfare-negativ'),
   /* Je Partei ein eigener Kraft-Klang. Ohne bekannte Rolle bleibt es beim
      allgemeinen Ankuendigungston, statt gar nichts zu spielen. */
-  special:    (role)=> Sound.play(SUPERPOWER_SOUND[role] || 'announce'),
+  /* Ohne Rolle gäbe es keinen sinnvollen Klang. Früher fiel die Funktion
+     hier still auf 'announce' zurück - dadurch spielte ein vergessenes
+     Rollen-Argument seelenruhig den Auswertungs-Klang, statt aufzufallen
+     (genau so blieb der Zuschauermodus lange unbemerkt falsch). */
+  special:    (role)=>{
+    const klang = SUPERPOWER_SOUND[role];
+    if(!klang){ console.warn('SFX.special ohne bekannte Rolle:', role); return; }
+    Sound.play(klang);
+  },
   /* Ausgang des Shoot-Outs aus Sicht der schiessenden Partei. */
   shootout:   (gewonnen)=> Sound.play(gewonnen ? 'shootout-win' : 'shootout-tie'),
 };
@@ -2566,7 +2574,7 @@ const App = {
     if(!res.ok) return;
     this.trackContested(role, mv);
     this.msg = resolvingSpecial ? this.specialBanner(s.log.slice(logLenBefore)) : '';
-    if(s.pendingSpecial && s.pendingSpecial!==specialBefore) SFX.special();
+    if(s.pendingSpecial && s.pendingSpecial!==specialBefore) SFX.special(s.pendingSpecial.role);
     else if(s.pendingEval) SFX.announce();
     else if(mv.kind==='placeHex') SFX.growPlace();
     else if(mv.kind==='placeCoin') SFX.place();
@@ -3770,11 +3778,22 @@ const App = {
     });
     const sk=document.getElementById('specialSkip'); if(sk) sk.onclick=()=>{ if(!this.busy) this.trySpecialSkip(); };
     const ack=document.getElementById('msgAck'); if(ack) ack.onclick=()=>{
+      /* Die Meldung wird IMMER hier weggeräumt - auch dann, wenn ein
+         wartender runAI-Lauf gleich weitermacht. Vorher passierte das nur im
+         zweiten Zweig, und der erste sprang mit return vorbei: msgAwaitingAck
+         blieb true, die Warteschleife in runAI legte sich sofort wieder
+         schlafen, und jeder weitere Klick auf "Weiter" verpuffte - das Spiel
+         stand still ("Neue Partie" ging noch, weil das ein anderer Knopf ist). */
       this._shootoutCell = null;
-      if(this._msgAckResolve){ this._msgAckResolve(); this._msgAckResolve=null; return; }
-      /* Meldung stammt aus einem eigenen Zug (kein wartender runAI-Lauf) -
-         dann reicht schlichtes Wegklicken. */
-      this.msg=''; this.msgAwaitingAck=false; this.render();
+      this.msg = '';
+      this.msgAwaitingAck = false;
+      if(this._msgAckResolve){
+        const weiter = this._msgAckResolve;
+        this._msgAckResolve = null;
+        weiter();
+        return;
+      }
+      this.render();
     };
 
     document.querySelectorAll('[data-cell]').forEach(el=>el.onclick=()=>{
